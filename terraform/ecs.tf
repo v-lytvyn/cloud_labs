@@ -22,6 +22,11 @@ resource "aws_cloudwatch_log_group" "api_logs" {
 
 resource "aws_ecs_cluster" "main" {
   name = "lab-cluster"
+
+  setting {
+    name  = "containerInsights"
+    value = "enabled"
+  }
 }
 
 resource "aws_ecs_task_definition" "api" {
@@ -42,10 +47,26 @@ resource "aws_ecs_task_definition" "api" {
         hostPort      = 5000
         protocol      = "tcp"
       }]
-      environment = [{
-        name  = "DATABASE_URL"
-        value = "mysql+pymysql://${var.db_username}:${var.db_password}@${aws_db_instance.mysql.endpoint}/${aws_db_instance.mysql.db_name}"
-      }]
+      environment = [
+        {
+          name  = "DATABASE_URL"
+          value = "mysql+pymysql://${var.db_username}:${var.db_password}@${aws_db_instance.mysql.endpoint}/${aws_db_instance.mysql.db_name}"
+        },
+        {
+          name  = "REDIS_URL"
+          value = "redis://localhost:6379/0"
+        },
+        {
+          name  = "CACHE_TTL"
+          value = "45"
+        }
+      ]
+      dependsOn = [
+        {
+          containerName = "redis"
+          condition     = "START"
+        }
+      ]
       logConfiguration = {
         logDriver = "awslogs"
         options = {
@@ -54,6 +75,16 @@ resource "aws_ecs_task_definition" "api" {
           "awslogs-stream-prefix" = "ecs"
         }
       }
+    },
+    {
+      name      = "redis"
+      image     = "redis:7-alpine"
+      essential = true
+      portMappings = [{
+        containerPort = 6379
+        hostPort      = 6379
+        protocol      = "tcp"
+      }]
     }
   ])
 }

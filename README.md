@@ -14,6 +14,15 @@
 │       └── deploy.yml          # CI/CD пайплайн
 ├── config/
 │   └── app.yml                 # Конфігураційні файли застосунку
+├── docs/
+│   ├── ALERTS.md               # Налаштування та аналіз сповіщень CloudWatch/SNS
+│   ├── AUTOSCALING.md          # Політика автомасштабування та аналіз затримок
+│   ├── CACHE.md                # Реалізація кешування Redis
+│   ├── LOADTEST.md             # Методика та результати навантажувального тестування
+│   └── *.png                   # Скріншоти дашбордів, звітів k6 та листів сповіщень
+├── loadtest/
+│   ├── README.md               # Інструкція із запуску навантажувального тесту
+│   └── script.js               # Сценарій тестування k6
 ├── my_project/
 │   └── auth/
 │       ├── controller/         # Контролери
@@ -23,6 +32,7 @@
 │       └── service/            # Бізнес-логіка
 ├── terraform/
 │   ├── alb.tf                  # Application Load Balancer та Target Group
+│   ├── autoscaling.tf          # Політика автомасштабування ECS
 │   ├── database.tf             # AWS RDS
 │   ├── ecr.tf                  # Elastic Container Registry
 │   ├── ecs.tf                  # AWS ECS Fargate кластер, task та сервіс

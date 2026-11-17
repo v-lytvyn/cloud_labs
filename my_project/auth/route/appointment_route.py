@@ -1,4 +1,7 @@
-from flask import Blueprint, request
+import os
+import json
+import redis
+from flask import Blueprint, request, jsonify, make_response
 from flask_jwt_extended import jwt_required
 from my_project.auth.service.appointment_service import AppointmentService
 from my_project.auth.controller.appointment_controller import AppointmentController
@@ -7,10 +10,21 @@ bp = Blueprint("appointments", __name__)
 service = AppointmentService()
 controller = AppointmentController()
 
+REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+CACHE_TTL = int(os.environ.get("CACHE_TTL", 45))
+CACHE_ENABLED = os.environ.get("CACHE_ENABLED", "true").lower() == "true"
+CACHE_KEY = "appointments:all"
+
+try:
+    redis_client = redis.from_url(REDIS_URL, decode_responses=True, socket_connect_timeout=1)
+except Exception:
+    redis_client = None
+
+
 @bp.get("/")
 def get_all():
     """
-    Get all appointments
+    Get all appointments (with Redis cache-aside)
     ---
     tags:
       - Appointments
@@ -18,8 +32,59 @@ def get_all():
       200:
         description: Successfully retrieved list of appointments
     """
+    if CACHE_ENABLED and redis_client is not None:
+        try:
+            cached_data = redis_client.get(CACHE_KEY)
+            if cached_data is not None:
+                redis_client.incr("cache:hits")
+                resp = make_response(jsonify(json.loads(cached_data)), 200)
+                resp.headers["X-Cache"] = "HIT"
+                return resp
+            redis_client.incr("cache:misses")
+        except Exception:
+            pass
+
     appts = service.get_all()
-    return [controller.convert(a) for a in appts]
+    result = [controller.convert(a) for a in appts]
+
+    if CACHE_ENABLED and redis_client is not None:
+        try:
+            redis_client.setex(CACHE_KEY, CACHE_TTL, json.dumps(result))
+        except Exception:
+            pass
+
+    resp = make_response(jsonify(result), 200)
+    resp.headers["X-Cache"] = "MISS"
+    return resp
+
+
+@bp.get("/cache-stats")
+def cache_stats():
+    """
+    Get Redis cache hit/miss statistics
+    ---
+    tags:
+      - Appointments
+    responses:
+      200:
+        description: Cache statistics
+    """
+    if redis_client is None:
+        return jsonify({"error": "Redis not configured"}), 503
+    try:
+        hits = int(redis_client.get("cache:hits") or 0)
+        misses = int(redis_client.get("cache:misses") or 0)
+        total = hits + misses
+        hit_ratio = round((hits / total) * 100, 2) if total > 0 else 0.0
+        return jsonify({
+            "hits": hits,
+            "misses": misses,
+            "total_reads": total,
+            "hit_ratio_percent": hit_ratio
+        }), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 
 @bp.get("/<int:id>")
 def get_by_id(id):
@@ -41,6 +106,7 @@ def get_by_id(id):
     a = service.get(id)
     return controller.convert(a)
 
+
 @bp.post("/")
 @jwt_required()
 def create():
@@ -55,15 +121,21 @@ def create():
         schema:
           type: object
           properties:
-            date:
-              type: string
-              example: "2026-11-20T10:00:00"
             doctor_id:
               type: integer
               example: 1
             patient_id:
               type: integer
               example: 1
+            appointment_datetime:
+              type: string
+              example: "2026-11-20 10:00:00"
+            status:
+              type: string
+              example: "planned"
+            notes:
+              type: string
+              example: "Consultation"
     responses:
       200:
         description: Appointment successfully created
@@ -73,6 +145,7 @@ def create():
     data = request.json
     a = service.create(data)
     return controller.convert(a)
+
 
 @bp.put("/<int:id>")
 @jwt_required()
@@ -92,9 +165,9 @@ def update(id):
         schema:
           type: object
           properties:
-            date:
+            appointment_datetime:
               type: string
-              example: "2026-11-21T14:30:00"
+              example: "2026-11-21 14:30:00"
     responses:
       200:
         description: Appointment data updated
@@ -104,6 +177,7 @@ def update(id):
     data = request.json
     a = service.update(id, data)
     return controller.convert(a)
+
 
 @bp.delete("/<int:id>")
 @jwt_required()
@@ -127,6 +201,7 @@ def delete(id):
     service.delete(id)
     return {"status": "deleted"}
 
+
 @bp.get("/doctor/<int:doctor_id>")
 def get_by_doctor(doctor_id):
     """
@@ -146,6 +221,7 @@ def get_by_doctor(doctor_id):
     """
     appts = service.get_for_doctor(doctor_id)
     return [controller.convert(a) for a in appts]
+
 
 @bp.get("/patient/<int:patient_id>")
 def get_by_patient(patient_id):
