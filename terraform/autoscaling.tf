@@ -23,3 +23,29 @@ resource "aws_appautoscaling_policy" "ecs_cpu_policy" {
     scale_out_cooldown = 60
   }
 }
+
+resource "aws_appautoscaling_scheduled_action" "day_scale" {
+  name               = "lab-api-day-scale"
+  service_namespace  = aws_appautoscaling_target.ecs_target.service_namespace
+  resource_id        = aws_appautoscaling_target.ecs_target.resource_id
+  scalable_dimension = aws_appautoscaling_target.ecs_target.scalable_dimension
+  schedule           = "cron(0 6 * * ? *)"
+
+  scalable_target_action {
+    min_capacity = 2
+    max_capacity = 4
+  }
+}
+
+resource "aws_appautoscaling_scheduled_action" "night_scale" {
+  name               = "lab-api-night-scale"
+  service_namespace  = aws_appautoscaling_target.ecs_target.service_namespace
+  resource_id        = aws_appautoscaling_target.ecs_target.resource_id
+  scalable_dimension = aws_appautoscaling_target.ecs_target.scalable_dimension
+  schedule           = "cron(0 20 * * ? *)"
+
+  scalable_target_action {
+    min_capacity = 1
+    max_capacity = 4
+  }
+}

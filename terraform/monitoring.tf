@@ -141,6 +141,43 @@ resource "aws_cloudwatch_dashboard" "main_dashboard" {
           stat    = "Sum"
           title   = "HTTP 5xx Errors"
         }
+      },
+      {
+        type   = "metric"
+        x      = 0
+        y      = 12
+        width  = 12
+        height = 6
+        properties = {
+          metrics = [
+            ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", aws_sqs_queue.appointments.name]
+          ]
+          view    = "timeSeries"
+          stacked = false
+          region  = "eu-north-1"
+          period  = 60
+          stat    = "Average"
+          title   = "SQS Queue Depth (Messages Visible)"
+        }
+      },
+      {
+        type   = "metric"
+        x      = 12
+        y      = 12
+        width  = 12
+        height = 6
+        properties = {
+          metrics = [
+            ["ECS/ContainerInsights", "RunningTaskCount", "ServiceName", aws_ecs_service.worker.name, "ClusterName", aws_ecs_cluster.main.name],
+            [".", "DesiredTaskCount", ".", ".", ".", "."]
+          ]
+          view    = "timeSeries"
+          stacked = false
+          region  = "eu-north-1"
+          period  = 60
+          stat    = "Average"
+          title   = "Worker Instances (Running vs Desired)"
+        }
       }
     ]
   })

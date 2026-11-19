@@ -1,5 +1,7 @@
 import os
 import json
+import uuid
+import boto3
 import redis
 from flask import Blueprint, request, jsonify, make_response
 from flask_jwt_extended import jwt_required
@@ -14,11 +16,17 @@ REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 CACHE_TTL = int(os.environ.get("CACHE_TTL", 45))
 CACHE_ENABLED = os.environ.get("CACHE_ENABLED", "true").lower() == "true"
 CACHE_KEY = "appointments:all"
+IDEMPOTENCY_TTL = 86400  # 24 години
+
+SQS_QUEUE_URL = os.environ.get("SQS_QUEUE_URL", "")
+AWS_REGION = os.environ.get("AWS_REGION", "eu-north-1")
 
 try:
     redis_client = redis.from_url(REDIS_URL, decode_responses=True, socket_connect_timeout=1)
 except Exception:
     redis_client = None
+
+sqs_client = boto3.client("sqs", region_name=AWS_REGION) if SQS_QUEUE_URL else None
 
 
 @bp.get("/")
@@ -111,11 +119,16 @@ def get_by_id(id):
 @jwt_required()
 def create():
     """
-    Create a new appointment
+    Create a new appointment (asynchronous via SQS with Idempotency-Key support)
     ---
     tags:
       - Appointments
     parameters:
+      - name: Idempotency-Key
+        in: header
+        type: string
+        required: false
+        description: Unique key to guarantee idempotent request processing for 24 hours
       - in: body
         name: body
         schema:
@@ -137,14 +150,71 @@ def create():
               type: string
               example: "Consultation"
     responses:
+      202:
+        description: Appointment creation queued for asynchronous processing
       200:
-        description: Appointment successfully created
+        description: Appointment successfully created synchronously
       401:
         description: Unauthorized
     """
-    data = request.json
-    a = service.create(data)
-    return controller.convert(a)
+    idem_key = request.headers.get("Idempotency-Key")
+    redis_idem_key = f"idempotency:{idem_key}" if idem_key else None
+
+    if redis_idem_key and redis_client is not None:
+        try:
+            saved = redis_client.get(redis_idem_key)
+            if saved is not None:
+                parsed = json.loads(saved)
+                resp = make_response(jsonify(parsed["body"]), parsed["status_code"])
+                resp.headers["X-Idempotency-Replayed"] = "true"
+                return resp
+        except Exception:
+            pass
+
+    data = request.json or {}
+    request_id = str(uuid.uuid4())
+
+    if sqs_client is not None and SQS_QUEUE_URL:
+        message_payload = {
+            "request_id": request_id,
+            "idempotency_key": idem_key,
+            "data": data,
+        }
+        sqs_client.send_message(
+            QueueUrl=SQS_QUEUE_URL,
+            MessageBody=json.dumps(message_payload),
+        )
+        status_code = 202
+        response_body = {
+            "status": "accepted",
+            "request_id": request_id,
+            "idempotency_key": idem_key,
+            "message": "Appointment creation queued for processing",
+        }
+    else:
+        a = service.create(data)
+        if redis_client is not None:
+            try:
+                redis_client.delete(CACHE_KEY)
+            except Exception:
+                pass
+        status_code = 200
+        response_body = controller.convert(a)
+
+    if redis_idem_key and redis_client is not None:
+        try:
+            redis_client.setex(
+                redis_idem_key,
+                IDEMPOTENCY_TTL,
+                json.dumps({"status_code": status_code, "body": response_body}),
+            )
+        except Exception:
+            pass
+
+    resp = make_response(jsonify(response_body), status_code)
+    if idem_key:
+        resp.headers["X-Idempotency-Replayed"] = "false"
+    return resp
 
 
 @bp.put("/<int:id>")

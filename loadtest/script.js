@@ -67,7 +67,18 @@ export function setup() {
     patientId = patBody.patient_id || patBody.id || patientId;
   }
 
-  return { token, doctorId, patientId };
+  let existingApptId = 1;
+  const apptsRes = http.get(`${BASE_URL}/appointments/`);
+  if (apptsRes.status === 200) {
+    try {
+      const list = apptsRes.json();
+      if (Array.isArray(list) && list.length > 0 && list[0].appointment_id) {
+        existingApptId = list[0].appointment_id;
+      }
+    } catch (e) {}
+  }
+
+  return { token, doctorId, patientId, existingApptId };
 }
 
 export default function (data) {
@@ -75,6 +86,7 @@ export default function (data) {
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${data.token}`,
+      'Idempotency-Key': `k6-${__VU}-${__ITER}-${Date.now()}`,
     },
   };
 
@@ -88,24 +100,32 @@ export default function (data) {
 
   const createRes = http.post(`${BASE_URL}/appointments/`, apptPayload, authParams);
   check(createRes, {
-    'POST /appointments/ is 200': (r) => r.status === 200,
+    'POST /appointments/ is 202 or 200': (r) => r.status === 202 || r.status === 200,
   });
 
-  let createdApptId = 1;
+  let targetApptId = data.existingApptId;
   try {
     const body = createRes.json();
     if (body && body.appointment_id) {
-      createdApptId = body.appointment_id;
+      targetApptId = body.appointment_id;
     }
   } catch (e) {}
 
   for (let i = 0; i < 3; i++) {
     const listRes = http.get(`${BASE_URL}/appointments/`);
     check(listRes, { 'GET /appointments/ is 200': (r) => r.status === 200 });
+    if (i === 0 && listRes.status === 200) {
+      try {
+        const list = listRes.json();
+        if (Array.isArray(list) && list.length > 0 && list[0].appointment_id) {
+          targetApptId = list[list.length - 1].appointment_id;
+        }
+      } catch (e) {}
+    }
   }
 
   for (let i = 0; i < 2; i++) {
-    const oneRes = http.get(`${BASE_URL}/appointments/${createdApptId}`);
+    const oneRes = http.get(`${BASE_URL}/appointments/${targetApptId}`);
     check(oneRes, { 'GET /appointments/:id is 200': (r) => r.status === 200 });
   }
 

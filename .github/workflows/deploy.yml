@@ -34,6 +34,11 @@ jobs:
           docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
 
-      - name: Update ECS Service
+      - name: Update ECS Services
         run: |
           aws ecs update-service --cluster lab-cluster --service lab-api-service --force-new-deployment --region eu-north-1
+          if aws ecs describe-services --cluster lab-cluster --services lab-worker-service --region eu-north-1 --query "services[?status=='ACTIVE']" --output text | grep -q "lab-worker-service"; then
+            aws ecs update-service --cluster lab-cluster --service lab-worker-service --force-new-deployment --region eu-north-1
+          else
+            echo "lab-worker-service not yet created in Terraform, update skipped."
+          fi
